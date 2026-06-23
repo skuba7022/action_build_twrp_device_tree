@@ -3,7 +3,7 @@ name: Make TWRP Device
 on:
   workflow_dispatch:
     inputs:
-      IMG_URL:    
+      IMG_URL:
         description: 'IMG_URL'
         required: true
         default: ''
@@ -12,34 +12,91 @@ jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Check Out
       uses: actions/checkout@v4
-      
+
     - name: Prepare the environment
       run: |
         sudo apt update
-        sudo apt -y install python3 python3-pip python3-venv cpio wget aria2
+        sudo apt -y install \
+          python3 python3-pip python3-venv cpio wget aria2 \
+          git unzip p7zip-full abootimg android-tools-fsutils lzop file
         python3 -m venv venv
         source venv/bin/activate
+        python3 -m pip install --upgrade pip
         pip3 install twrpdtgen
-        mkdir dt
-      
+        mkdir -p dt
+
     - name: Download boot or recovery img
       run: |
-        aria2c "${{ github.event.inputs.IMG_URL }}"
-        ls
-      
-    - name: Start build
+        # Force output filename to image.img for predictable handling
+        aria2c -x 4 -s 4 -o image.img "${{ github.event.inputs.IMG_URL }}"
+        echo "Downloaded file info:"
+        file image.img || true
+        ls -lh
+
+        # Try to detect & extract common archive types into ./extracted
+        rm -rf extracted
+        mkdir -p extracted || true
+        if unzip -l image.img >/dev/null 2>&1; then
+          echo "Detected ZIP archive, extracting..."
+          unzip -o image.img -d extracted
+        fi
+        if 7z l image.img >/dev/null 2>&1; then
+          echo "Detected 7z archive, extracting..."
+          7z x image.img -oextracted
+        fi
+        if tar -tf image.img >/dev/null 2>&1; then
+          echo "Detected tar archive, extracting..."
+          tar -xf image.img -C extracted || true
+        fi
+
+        # If extraction produced images, list them
+        echo "Images found:"
+        find extracted -type f -name '*.img' -print || true
+        find . -maxdepth 2 -type f -name '*.img' -print || true
+
+    - name: Start build (debug)
       run: |
         source venv/bin/activate
-        python3 -m twrpdtgen -o dt/ *.img
-        
+
+        # Find an .img file to pass to twrpdtgen
+        # Prefer extracted/*.img if present, else image.img
+        IMG_FILE=$(find extracted -type f -name '*.img' -print -quit || true)
+        if [ -z "$IMG_FILE" ]; then
+          if [ -f image.img ]; then
+            IMG_FILE=image.img
+          else
+            echo "No .img found in workspace; check IMG_URL and download step output"
+            ls -la
+            exit 1
+          fi
+        fi
+
+        echo "Using image file: $IMG_FILE"
+        ls -lh "$IMG_FILE" || true
+
+        # Run twrpdtgen and capture full logs for debugging
+        python3 -m twrpdtgen -o dt/ "$IMG_FILE" >twrpdtgen.log 2>&1 || (echo "twrpdtgen failed, printing tail of log:" && tail -n 200 twrpdtgen.log && exit 1)
+
+    - name: Upload twrpdtgen log (always)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: twrpdtgen-log
+        path: twrpdtgen.log
+
     - name: ZIP device tree
       run: |
-        zip -r DeviceTree.zip ./dt
-        
+        if [ -d dt ] && [ "$(ls -A dt)" ]; then
+          zip -r DeviceTree.zip ./dt
+        else
+          echo "No device tree generated; skipping zip"
+          exit 1
+        fi
+
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
