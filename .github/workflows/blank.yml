@@ -22,13 +22,8 @@ jobs:
         sudo apt-get update 
         sudo apt-get install -y --no-install-recommends \
           python3 python3-pip python3-venv cpio wget aria2 \
-          git unzip p7zip-full abootimg android-sdk-libsparse-utils lzop file
-        python3 -m venv venv
-        source venv/bin/activate
-        python3 -m pip install --upgrade pip
-        python3 -m pip install twrpdtgen
-        mkdir -p dt
-
+          git unzip p7zip-full abootimg android-sdk-libsparse-utils lzop file \
+          brotli dtc libmagic1 openjdk-11-jdk-headless
         python3 -m venv venv
         source venv/bin/activate
         python3 -m pip install --upgrade pip
